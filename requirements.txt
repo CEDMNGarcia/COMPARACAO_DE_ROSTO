@@ -1,8 +1,6 @@
 streamlit
 numpy
-pillow
 pymongo
-deepface
+pillow
+mediapipe
 opencv-python-headless
-tensorflow-cpu==2.15.0
-scipy
