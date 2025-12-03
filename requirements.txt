@@ -1,6 +1,5 @@
 streamlit
-numpy
+numpy<2.0
 pymongo
 pillow
-mediapipe
 opencv-python-headless
