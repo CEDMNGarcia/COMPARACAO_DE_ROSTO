@@ -1,8 +1,8 @@
 streamlit
-pymongo
-pillow
 numpy
-deepface==0.0.79
-tensorflow==2.12.0
-tf-keras
+pillow
+pymongo
+deepface
 opencv-python-headless
+tensorflow-cpu
+scipy
