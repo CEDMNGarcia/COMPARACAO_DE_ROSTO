@@ -1,11 +1,9 @@
 import streamlit as st
-import face_recognition
 import numpy as np
 from pymongo import MongoClient
 from PIL import Image
-import io
-import base64
-import os
+import io, base64
+from deepface import DeepFace
 
 # ==========================
 # CONFIGURAÇÃO DO MONGO
@@ -18,33 +16,38 @@ client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 collection = db[COLLECTION_NAME]
 
-
 # ==========================
 # FUNÇÕES
 # ==========================
+
 def imagem_para_base64(imagem_bytes):
     return base64.b64encode(imagem_bytes).decode("utf-8")
-
 
 def base64_para_imagem(image_base64):
     return Image.open(io.BytesIO(base64.b64decode(image_base64)))
 
+def gerar_embedding(imagem_bytes):
+    imagem = Image.open(io.BytesIO(imagem_bytes)).convert("RGB")
 
-def extrair_embedding(imagem_bytes):
-    imagem = face_recognition.load_image_file(io.BytesIO(imagem_bytes))
-    locations = face_recognition.face_locations(imagem)
+    try:
+        embedding = DeepFace.represent(
+            np.array(imagem),
+            model_name="Facenet",
+            enforce_detection=True
+        )[0]["embedding"]
 
-    if len(locations) == 0:
+        return np.array(embedding)
+
+    except:
         return None
-
-    encoding = face_recognition.face_encodings(imagem, locations)[0]
-    return encoding
-
 
 # ==========================
 # INTERFACE
 # ==========================
-st.title("Atividade 14 - MongoDB + Streamlit + Reconhecimento Facial")
+
+st.set_page_config(page_title="Atividade 14 - Reconhecimento Facial", layout="centered")
+
+st.title("🧠 Atividade 14 - MongoDB + Streamlit + DeepFace")
 
 menu = st.sidebar.selectbox(
     "Menu",
@@ -56,7 +59,7 @@ menu = st.sidebar.selectbox(
 # ==========================
 if menu == "Inserir imagens no MongoDB":
 
-    st.header("Inserir imagens no MongoDB")
+    st.header("📥 Inserir imagens no MongoDB")
 
     imagens = st.file_uploader(
         "Selecione imagens para salvar no banco",
@@ -75,35 +78,43 @@ if menu == "Inserir imagens no MongoDB":
                 img_bytes = img.getvalue()
                 img_base64 = imagem_para_base64(img_bytes)
 
-                encoding = extrair_embedding(img_bytes)
+                embedding = gerar_embedding(img_bytes)
 
-                if encoding is not None:
+                if embedding is not None:
                     documento = {
                         "nome_arquivo": img.name,
                         "imagem_base64": img_base64,
-                        "embedding": encoding.tolist()
+                        "embedding": embedding.tolist()
                     }
 
                     collection.insert_one(documento)
                     total += 1
 
-            st.success(f"{total} imagens foram salvas com sucesso no MongoDB!")
+            st.success(f"✅ {total} imagens foram salvas com sucesso no MongoDB!")
 
         else:
-            st.warning("Nenhuma imagem selecionada.")
-
+            st.warning("⚠️ Nenhuma imagem selecionada.")
 
 # ==========================
 # 2 - COMPARAR MINHA FOTO
 # ==========================
 elif menu == "Comparar com minha foto":
 
-    st.header("Descobrir a imagem mais parecida e mais diferente")
+    st.header("📸 Descobrir a imagem mais parecida e mais diferente")
 
-    minha_imagem = st.file_uploader(
-        "Envie uma foto sua",
-        type=["jpg", "png", "jpeg"]
+    metodo = st.radio(
+        "Como deseja enviar sua foto?",
+        ["Enviar imagem", "Tirar foto pela câmera"]
     )
+
+    if metodo == "Enviar imagem":
+        minha_imagem = st.file_uploader(
+            "Envie uma foto sua",
+            type=["jpg", "png", "jpeg"]
+        )
+
+    else:
+        minha_imagem = st.camera_input("Tire sua foto")
 
     if minha_imagem:
 
@@ -112,16 +123,16 @@ elif menu == "Comparar com minha foto":
 
         st.image(imagem, caption="Sua foto", width=250)
 
-        encoding_usuario = extrair_embedding(img_bytes)
+        encoding_usuario = gerar_embedding(img_bytes)
 
         if encoding_usuario is None:
-            st.error("Nenhum rosto detectado na imagem enviada!")
+            st.error("❌ Nenhum rosto detectado na imagem enviada!")
 
         else:
             documentos = list(collection.find())
 
             if len(documentos) == 0:
-                st.warning("O banco não possui imagens.")
+                st.warning("⚠️ O banco não possui imagens.")
             else:
 
                 distancias = []
@@ -150,7 +161,6 @@ elif menu == "Comparar com minha foto":
                 st.image(img1, width=200)
                 st.write(f"Nome: {mais_parecido['nome']}")
                 st.write(f"Distância: {mais_parecido['distancia']:.4f}")
-
 
                 st.subheader("❌ Mais diferente")
 
