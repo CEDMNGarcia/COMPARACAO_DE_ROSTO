@@ -1,0 +1,7 @@
+streamlit
+face_recognition
+numpy
+pymongo
+pillow
+cmake
+dlib
