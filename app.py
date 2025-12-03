@@ -28,17 +28,20 @@ def base64_para_imagem(image_base64):
 
 def gerar_embedding(imagem_bytes):
     imagem = Image.open(io.BytesIO(imagem_bytes)).convert("RGB")
+    imagem = np.array(imagem)
 
     try:
-        embedding = DeepFace.represent(
-            np.array(imagem),
-            model_name="Facenet",
-            enforce_detection=True
-        )[0]["embedding"]
+        embedding_obj = DeepFace.represent(
+            img_path = imagem,
+            model_name = "Facenet512",
+            enforce_detection = False,
+            detector_backend = "opencv"
+        )
 
-        return np.array(embedding)
+        return np.array(embedding_obj[0]["embedding"])
 
-    except:
+    except Exception as e:
+        st.error(f"Erro ao gerar embedding: {e}")
         return None
 
 # ==========================
@@ -169,3 +172,4 @@ elif menu == "Comparar com minha foto":
                 st.image(img2, width=200)
                 st.write(f"Nome: {mais_diferente['nome']}")
                 st.write(f"Distância: {mais_diferente['distancia']:.4f}")
+
