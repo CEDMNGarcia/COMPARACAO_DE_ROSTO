@@ -2,8 +2,10 @@ import streamlit as st
 import numpy as np
 from pymongo import MongoClient
 from PIL import Image
-import io, base64
-from deepface import DeepFace
+import io
+import base64
+import mediapipe as mp
+import cv2
 
 # ==========================
 # CONFIGURAÇÃO DO MONGO
@@ -17,6 +19,12 @@ db = client[DB_NAME]
 collection = db[COLLECTION_NAME]
 
 # ==========================
+# CONFIGURAÇÃO MEDIAPIPE
+# ==========================
+mp_face_detection = mp.solutions.face_detection
+face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+
+# ==========================
 # FUNÇÕES
 # ==========================
 
@@ -26,27 +34,41 @@ def imagem_para_base64(imagem_bytes):
 def base64_para_imagem(image_base64):
     return Image.open(io.BytesIO(base64.b64decode(image_base64)))
 
+def preprocessar_imagem(imagem_bytes):
+    nparr = np.frombuffer(imagem_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    rgb_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return rgb_image
+
 def gerar_embedding(imagem_bytes):
+    image = preprocessar_imagem(imagem_bytes)
+    results = face_detection.process(image)
 
-    import os
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-    imagem = Image.open(io.BytesIO(imagem_bytes)).convert("RGB")
-    imagem = np.array(imagem)
-
-    try:
-        embedding_obj = DeepFace.represent(
-            img_path = imagem,
-            model_name = "SFace",
-            enforce_detection = False,
-            detector_backend = "opencv"
-        )
-
-        return np.array(embedding_obj[0]["embedding"])
-
-    except Exception as e:
-        st.error(f"Erro ao gerar embedding: {e}")
+    if not results.detections:
         return None
+
+    # Pegando a primeira face
+    detection = results.detections[0]
+    bbox = detection.location_data.relative_bounding_box
+
+    h, w, _ = image.shape
+    x = int(bbox.xmin * w)
+    y = int(bbox.ymin * h)
+    w_box = int(bbox.width * w)
+    h_box = int(bbox.height * h)
+
+    face = image[y:y+h_box, x:x+w_box]
+
+    if face.size == 0:
+        return None
+
+    # Padronizando rosto
+    face = cv2.resize(face, (100, 100))
+
+    # Gerando embedding simples (normalizado)
+    embedding = face.flatten() / 255.0
+
+    return embedding
 
 
 # ==========================
@@ -54,8 +76,7 @@ def gerar_embedding(imagem_bytes):
 # ==========================
 
 st.set_page_config(page_title="Atividade 14 - Reconhecimento Facial", layout="centered")
-
-st.title("🧠 Atividade 14 - MongoDB + Streamlit + DeepFace")
+st.title("🧠 Atividade 14 - MongoDB + Streamlit + MediaPipe")
 
 menu = st.sidebar.selectbox(
     "Menu",
@@ -63,26 +84,24 @@ menu = st.sidebar.selectbox(
 )
 
 # ==========================
-# 1 - INSERIR IMAGENS NO BANCO
+# 1 - INSERIR IMAGENS
 # ==========================
 if menu == "Inserir imagens no MongoDB":
 
     st.header("📥 Inserir imagens no MongoDB")
 
     imagens = st.file_uploader(
-        "Selecione imagens para salvar no banco",
-        type=["jpg", "png", "jpeg"],
+        "Selecione imagens",
+        type=["jpg", "jpeg", "png"],
         accept_multiple_files=True
     )
 
-    if st.button("Salvar no MongoDB"):
+    if st.button("Salvar no banco"):
 
         if imagens:
-
             total = 0
 
             for img in imagens:
-
                 img_bytes = img.getvalue()
                 img_base64 = imagem_para_base64(img_bytes)
 
@@ -98,13 +117,14 @@ if menu == "Inserir imagens no MongoDB":
                     collection.insert_one(documento)
                     total += 1
 
-            st.success(f"✅ {total} imagens foram salvas com sucesso no MongoDB!")
+            st.success(f"✅ {total} imagens salvas no MongoDB!")
 
         else:
             st.warning("⚠️ Nenhuma imagem selecionada.")
 
+
 # ==========================
-# 2 - COMPARAR MINHA FOTO
+# 2 - COMPARAR COM MINHA FOTO
 # ==========================
 elif menu == "Comparar com minha foto":
 
@@ -116,11 +136,7 @@ elif menu == "Comparar com minha foto":
     )
 
     if metodo == "Enviar imagem":
-        minha_imagem = st.file_uploader(
-            "Envie uma foto sua",
-            type=["jpg", "png", "jpeg"]
-        )
-
+        minha_imagem = st.file_uploader("Envie sua foto", type=["jpg", "jpeg", "png"])
     else:
         minha_imagem = st.camera_input("Tire sua foto")
 
@@ -131,24 +147,21 @@ elif menu == "Comparar com minha foto":
 
         st.image(imagem, caption="Sua foto", width=250)
 
-        encoding_usuario = gerar_embedding(img_bytes)
+        embedding_usuario = gerar_embedding(img_bytes)
 
-        if encoding_usuario is None:
-            st.error("❌ Nenhum rosto detectado na imagem enviada!")
-
+        if embedding_usuario is None:
+            st.error("❌ Nenhum rosto detectado na imagem")
         else:
             documentos = list(collection.find())
 
             if len(documentos) == 0:
-                st.warning("⚠️ O banco não possui imagens.")
+                st.warning("⚠️ Nenhuma imagem no banco.")
             else:
-
                 distancias = []
 
                 for doc in documentos:
-
                     embedding_banco = np.array(doc["embedding"])
-                    distancia = np.linalg.norm(encoding_usuario - embedding_banco)
+                    distancia = np.linalg.norm(embedding_usuario - embedding_banco)
 
                     distancias.append({
                         "nome": doc["nome_arquivo"],
@@ -159,23 +172,14 @@ elif menu == "Comparar com minha foto":
                 mais_parecido = min(distancias, key=lambda x: x["distancia"])
                 mais_diferente = max(distancias, key=lambda x: x["distancia"])
 
-                # ==========================
-                # RESULTADOS
-                # ==========================
                 st.subheader("✅ Mais parecido")
-
                 img1 = base64_para_imagem(mais_parecido["imagem_base64"])
-
                 st.image(img1, width=200)
                 st.write(f"Nome: {mais_parecido['nome']}")
                 st.write(f"Distância: {mais_parecido['distancia']:.4f}")
 
                 st.subheader("❌ Mais diferente")
-
                 img2 = base64_para_imagem(mais_diferente["imagem_base64"])
-
                 st.image(img2, width=200)
                 st.write(f"Nome: {mais_diferente['nome']}")
                 st.write(f"Distância: {mais_diferente['distancia']:.4f}")
-
-
